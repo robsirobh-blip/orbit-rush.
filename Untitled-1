@@ -1,0 +1,446 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#10121d">
+<title>ORBIT RUSH</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#10121d;color:#fff;font-family:system-ui,-apple-system,sans-serif;touch-action:none;user-select:none}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#ui{position:absolute;inset:0;pointer-events:none}
+.screen{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;padding:24px;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);background:rgba(16,18,29,.94);pointer-events:auto;text-align:center;overflow-y:auto}
+.screen.active{display:flex}
+h1{font-size:42px;letter-spacing:5px;margin:10px 0;color:#66f5dc}
+h2{font-size:27px;margin:10px}
+p{color:#a7adc4;font-size:14px;line-height:1.5}
+button{border:0;border-radius:15px;padding:15px 20px;background:#66f5dc;color:#10121d;font-size:15px;font-weight:800;cursor:pointer;touch-action:manipulation}
+button:disabled{opacity:.35}
+.primary{width:100%;max-width:300px;margin:6px}
+.secondary{background:#292e43;color:#fff}
+.card{background:#202538;border:1px solid #353b51;border-radius:16px;padding:14px;margin:6px 0;width:100%;max-width:330px;text-align:left}
+.card button{padding:10px;font-size:12px}
+.line{display:flex;justify-content:space-between;align-items:center;gap:12px}
+small{color:#a7adc4}
+#hud{position:absolute;top:calc(env(safe-area-inset-top) + 20px);left:20px;right:20px;display:none;justify-content:space-between;align-items:center;font-weight:800;font-size:19px}
+#hint{position:absolute;bottom:calc(env(safe-area-inset-bottom) + 30px);left:0;right:0;text-align:center;color:#a7adc4;font-size:13px;display:none}
+#pause{pointer-events:auto;background:#292e43;color:white;padding:10px 15px}
+#toast{position:absolute;top:23%;left:10%;width:80%;text-align:center;color:#66f5dc;font-weight:bold;opacity:0;transition:opacity .2s}
+#shop{justify-content:flex-start}
+#shop h2{margin-top:35px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="ui">
+ <div id="hud">
+  <span id="score">0</span>
+  <span style="color:#ffd166">◆ <span id="runCoins">0</span></span>
+  <button id="pause">Ⅱ</button>
+ </div>
+ <div id="hint">TOCA LA PANTALLA PARA CAMBIAR DE DIRECCIÓN</div>
+ <div id="toast"></div>
+
+ <section id="menu" class="screen active">
+  <div style="font-size:55px;color:#66f5dc">◎</div>
+  <h1>ORBIT<br>RUSH</h1>
+  <p>Un toque. Una órbita. Sobrevive.</p>
+  <div class="card line">
+   <span>◆ Monedas: <b id="balance">0</b></span>
+   <span>★ Récord: <b id="best">0</b></span>
+  </div>
+  <button class="primary" onclick="startGame()">JUGAR ▶</button>
+  <button class="primary secondary" onclick="openShop()">TIENDA</button>
+  <button class="primary secondary" onclick="showScreen('help')">CÓMO JUGAR</button>
+ </section>
+
+ <section id="help" class="screen">
+  <h2>¿CÓMO JUGAR?</h2>
+  <p>Tu esfera gira alrededor del núcleo central.</p>
+  <p>Toca la pantalla para invertir el sentido del giro.</p>
+  <p>Recoge cristales amarillos y evita los obstáculos rojos.</p>
+  <p>Cuanto más sobrevivas, mayor será tu puntuación.</p>
+  <button class="primary" onclick="showScreen('menu')">ENTENDIDO</button>
+ </section>
+
+ <section id="over" class="screen">
+  <h2>FIN DE PARTIDA</h2>
+  <h1 id="finalScore">0</h1>
+  <p id="earned">Monedas conseguidas: 0</p>
+  <p id="recordMsg"></p>
+  <button class="primary" onclick="startGame()">REINTENTAR</button>
+  <button class="primary secondary" onclick="showScreen('menu')">MENÚ</button>
+  <button class="primary secondary" id="rewardBtn" onclick="rewardAd()">◆ RECOMPENSA DEMO +25</button>
+  <small>Demostración: no reproduce publicidad real.</small>
+ </section>
+
+ <section id="paused" class="screen">
+  <h2>PAUSA</h2>
+  <button class="primary" onclick="resumeGame()">CONTINUAR</button>
+  <button class="primary secondary" onclick="quitGame()">SALIR</button>
+ </section>
+
+ <section id="shop" class="screen">
+  <h2>TIENDA</h2>
+  <p>Saldo: ◆ <b id="shopBalance">0</b></p>
+  <div id="shopItems" style="width:100%;display:flex;flex-direction:column;align-items:center"></div>
+  <button class="primary secondary" onclick="showScreen('menu')">VOLVER</button>
+ </section>
+</div>
+
+<script>
+"use strict";
+
+// CONFIGURACIÓN Y GUARDADO
+const KEY="orbitRushSaveV1";
+const defaults={
+ coins:0,best:0,speed:0,bonus:0,shield:0,
+ skin:"cyan",owned:["cyan"]
+};
+let save;
+try{
+ save={...defaults,...JSON.parse(localStorage.getItem(KEY)||"{}")};
+ if(!Array.isArray(save.owned))save.owned=["cyan"];
+}catch(e){save={...defaults};}
+
+function persist(){
+ try{localStorage.setItem(KEY,JSON.stringify(save));}catch(e){}
+}
+function el(id){return document.getElementById(id);}
+function showScreen(id){
+ document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+ el(id).classList.add("active");
+ el("hud").style.display="none";
+ el("hint").style.display="none";
+ if(id==="menu"){
+  el("balance").textContent=save.coins;
+  el("best").textContent=save.best;
+ }
+}
+function toast(message){
+ el("toast").textContent=message;
+ el("toast").style.opacity=1;
+ clearTimeout(toast.timer);
+ toast.timer=setTimeout(()=>el("toast").style.opacity=0,1400);
+}
+
+// CANVAS
+const canvas=el("game"),ctx=canvas.getContext("2d");
+let W,H,cx,cy,R,dpr;
+function resize(){
+ dpr=Math.min(devicePixelRatio||1,2);
+ W=innerWidth;H=innerHeight;
+ canvas.width=Math.round(W*dpr);
+ canvas.height=Math.round(H*dpr);
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ cx=W/2;cy=H/2;
+ R=Math.min(W*.31,H*.19,135);
+}
+addEventListener("resize",resize);
+resize();
+
+// ESTADO DEL JUEGO
+let state="menu",angle=0,dir=1,score=0,runCoins=0;
+let elapsed=0,spawnTimer=0,crystalTimer=0;
+let obstacles=[],crystals=[],particles=[];
+let shieldAvailable=false,invulnerable=0;
+let last=0,rewardUsed=false;
+const TAU=Math.PI*2;
+const skins={
+ cyan:"#66f5dc",pink:"#ff75b5",gold:"#ffd166",
+ violet:"#b69cff",white:"#ffffff"
+};
+function polar(a,r){
+ return {x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r};
+}
+function distance(a,b){
+ return Math.hypot(a.x-b.x,a.y-b.y);
+}
+function randomAngle(){return Math.random()*TAU;}
+
+function startGame(){
+ angle=-Math.PI/2;dir=1;score=0;runCoins=0;
+ elapsed=0;spawnTimer=0;crystalTimer=0;
+ obstacles=[];crystals=[];particles=[];
+ shieldAvailable=save.shield>0;invulnerable=0;
+ state="playing";
+ document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+ el("hud").style.display="flex";
+ el("hint").style.display="block";
+ updateHUD();
+ last=performance.now();
+}
+function updateHUD(){
+ el("score").textContent=Math.floor(score);
+ el("runCoins").textContent=runCoins;
+}
+function pauseGame(){
+ if(state!=="playing")return;
+ state="paused";showScreen("paused");
+}
+function resumeGame(){
+ state="playing";
+ el("paused").classList.remove("active");
+ el("hud").style.display="flex";
+ el("hint").style.display="block";
+ last=performance.now();
+}
+function quitGame(){
+ state="menu";showScreen("menu");
+}
+el("pause").addEventListener("click",pauseGame);
+
+canvas.addEventListener("pointerdown",e=>{
+ if(state==="playing"){
+  e.preventDefault();
+  dir*=-1;
+  burst(polar(angle,R),skins[save.skin],5);
+ }
+});
+
+document.addEventListener("visibilitychange",()=>{
+ if(document.hidden&&state==="playing")pauseGame();
+});
+
+// PARTÍCULAS
+function burst(p,color,count=12){
+ for(let i=0;i<count;i++){
+  let a=randomAngle(),v=40+Math.random()*100;
+  particles.push({
+   x:p.x,y:p.y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,
+   life:.45,max:.45,color
+  });
+ }
+}
+
+// MECÁNICA
+function spawnObstacle(){
+ // Aparece fuera de la órbita y se dirige hacia el núcleo.
+ const a=randomAngle();
+ const p=polar(a,R+Math.max(W,H)*.55);
+ const speed=85+Math.min(elapsed*2.4,100);
+ obstacles.push({
+  x:p.x,y:p.y,
+  vx:-Math.cos(a)*speed,vy:-Math.sin(a)*speed,
+  radius:10+Math.random()*4
+ });
+}
+function spawnCrystal(){
+ // Evita generar cristales demasiado cerca del jugador.
+ let a=randomAngle();
+ if(Math.abs(Math.atan2(Math.sin(a-angle),Math.cos(a-angle)))<.65)
+  a+=1.2;
+ const p=polar(a,R);
+ crystals.push({x:p.x,y:p.y,radius:9,life:5});
+}
+function update(dt){
+ elapsed+=dt;
+ score+=dt*10;
+ invulnerable=Math.max(0,invulnerable-dt);
+
+ const angularSpeed=1.8+Math.min(elapsed*.018,.85)+save.speed*.13;
+ angle+=dir*angularSpeed*dt;
+
+ spawnTimer+=dt;
+ crystalTimer+=dt;
+ if(spawnTimer>Math.max(.65,1.65-elapsed*.009)){
+  spawnTimer=0;spawnObstacle();
+ }
+ if(crystalTimer>1.7){
+  crystalTimer=0;spawnCrystal();
+ }
+ const player=polar(angle,R);
+
+ for(let i=obstacles.length-1;i>=0;i--){
+  let o=obstacles[i];
+  o.x+=o.vx*dt;o.y+=o.vy*dt;
+  if(distance(player,o)<o.radius+9&&invulnerable<=0){
+   obstacles.splice(i,1);
+   burst(player,"#ff637e",18);
+   if(shieldAvailable){
+    shieldAvailable=false;
+    invulnerable=1.5;
+    toast("ESCUDO ACTIVADO");
+   }else{
+    gameOver();
+    return;
+   }
+  }else if(distance(o,{x:cx,y:cy})<14){
+   obstacles.splice(i,1);
+  }
+ }
+ for(let i=crystals.length-1;i>=0;i--){
+  let c=crystals[i];c.life-=dt;
+  if(distance(player,c)<20){
+   crystals.splice(i,1);
+   runCoins+=5+save.bonus*2;
+   score+=15;
+   burst(c,"#ffd166");
+   updateHUD();
+  }else if(c.life<=0){
+   crystals.splice(i,1);
+  }
+ }
+ updateHUD();
+}
+function gameOver(){
+ state="over";
+ let final=Math.floor(score);
+ let isRecord=final>save.best;
+ if(isRecord)save.best=final;
+ let earned=runCoins+Math.floor(final/25);
+ save.coins+=earned;
+ persist();
+ el("finalScore").textContent=final;
+ el("earned").textContent="◆ Monedas ganadas: "+earned;
+ el("recordMsg").textContent=isRecord?"¡NUEVO RÉCORD!":"Récord: "+save.best;
+ rewardUsed=false;
+ el("rewardBtn").disabled=false;
+ showScreen("over");
+}
+
+// RECOMPENSA DEMO
+function rewardAd(){
+ if(rewardUsed)return;
+ rewardUsed=true;
+ save.coins+=25;
+ persist();
+ el("rewardBtn").disabled=true;
+ el("rewardBtn").textContent="RECOMPENSA RECIBIDA";
+ toast("+25 MONEDAS");
+}
+
+// TIENDA
+const upgrades=[
+ {id:"bonus",name:"Imán de cristales",desc:"Más monedas por cristal",base:60,max:5},
+ {id:"shield",name:"Escudo inicial",desc:"Absorbe un impacto por partida",base:180,max:1},
+ {id:"speed",name:"Velocidad orbital",desc:"Gira más rápido. Mejora opcional",base:70,max:4}
+];
+const skinItems=[
+ {id:"cyan",name:"Neon Cyan",price:0},
+ {id:"pink",name:"Candy Pink",price:100},
+ {id:"gold",name:"Solar Gold",price:180},
+ {id:"violet",name:"Cosmic Violet",price:250},
+ {id:"white",name:"Pure White",price:350}
+];
+function openShop(){showScreen("shop");renderShop();}
+function renderShop(){
+ el("shopBalance").textContent=save.coins;
+ const box=el("shopItems");box.replaceChildren();
+ function card(title,desc,label,action,disabled,color){
+  const c=document.createElement("div");c.className="card line";
+  const left=document.createElement("div");
+  const strong=document.createElement("b");strong.textContent=title;
+  const small=document.createElement("small");small.textContent=desc;
+  left.append(strong,document.createElement("br"),small);
+  if(color)strong.style.color=color;
+  const btn=document.createElement("button");
+  btn.textContent=label;btn.disabled=disabled;
+  btn.addEventListener("click",action);
+  c.append(left,btn);box.append(c);
+ }
+ upgrades.forEach(u=>{
+  const level=save[u.id],price=u.base*(level+1);
+  card(u.name+" · "+level+"/"+u.max,u.desc,
+   level>=u.max?"MAX":"◆ "+price,
+   ()=>buyUpgrade(u.id,price),
+   level>=u.max||save.coins<price);
+ });
+ skinItems.forEach(s=>{
+  const owned=save.owned.includes(s.id);
+  const selected=save.skin===s.id;
+  card("● "+s.name,"Apariencia de la esfera",
+   selected?"ACTIVA":owned?"USAR":"◆ "+s.price,
+   ()=>buySkin(s.id,s.price),
+   selected||(!owned&&save.coins<s.price),skins[s.id]);
+ });
+}
+function buyUpgrade(id,price){
+ const u=upgrades.find(x=>x.id===id);
+ if(!u||save[id]>=u.max||save.coins<price)return;
+ save.coins-=price;save[id]++;
+ persist();renderShop();
+}
+function buySkin(id,price){
+ const s=skinItems.find(x=>x.id===id);
+ if(!s)return;
+ if(!save.owned.includes(id)){
+  if(save.coins<price)return;
+  save.coins-=price;save.owned.push(id);
+ }
+ save.skin=id;persist();renderShop();
+}
+
+// DIBUJADO
+function circle(x,y,r,color){
+ ctx.beginPath();ctx.arc(x,y,r,0,TAU);
+ ctx.fillStyle=color;ctx.fill();
+}
+function draw(){
+ ctx.fillStyle="#10121d";ctx.fillRect(0,0,W,H);
+
+ // Estrellas decorativas deterministas
+ for(let i=0;i<35;i++){
+  let x=(i*137.7)%W,y=(i*211.3)%H;
+  circle(x,y,1,"#30364b");
+ }
+ // Órbita
+ ctx.beginPath();ctx.arc(cx,cy,R,0,TAU);
+ ctx.strokeStyle="#343b53";ctx.lineWidth=2;ctx.stroke();
+
+ circle(cx,cy,20,"#202c43");
+ circle(cx,cy,9,"#66f5dc");
+
+ if(state==="playing"||state==="paused"){
+  const player=polar(angle,R);
+  ctx.save();
+  ctx.shadowBlur=20;ctx.shadowColor=skins[save.skin];
+  if(invulnerable<=0||Math.floor(elapsed*12)%2===0)
+   circle(player.x,player.y,9,skins[save.skin]);
+  ctx.restore();
+
+  if(shieldAvailable){
+   ctx.beginPath();ctx.arc(player.x,player.y,15,0,TAU);
+   ctx.strokeStyle="#80bfff";ctx.lineWidth=2;ctx.stroke();
+  }
+  obstacles.forEach(o=>{
+   ctx.save();ctx.translate(o.x,o.y);ctx.rotate(elapsed);
+   ctx.fillStyle="#ff637e";
+   ctx.fillRect(-o.radius,-o.radius,o.radius*2,o.radius*2);
+   ctx.restore();
+  });
+  crystals.forEach(c=>{
+   ctx.save();ctx.translate(c.x,c.y);ctx.rotate(elapsed*2);
+   ctx.fillStyle="#ffd166";
+   ctx.beginPath();ctx.moveTo(0,-c.radius);
+   ctx.lineTo(c.radius,0);ctx.lineTo(0,c.radius);
+   ctx.lineTo(-c.radius,0);ctx.closePath();ctx.fill();
+   ctx.restore();
+  });
+ }
+ particles.forEach(p=>{
+  ctx.globalAlpha=Math.max(0,p.life/p.max);
+  circle(p.x,p.y,2.5,p.color);
+ });
+ ctx.globalAlpha=1;
+}
+function frame(t){
+ const dt=Math.min((t-last)/1000||0,.035);
+ last=t;
+ if(state==="playing")update(dt);
+ for(let i=particles.length-1;i>=0;i--){
+  let p=particles[i];p.life-=dt;
+  p.x+=p.vx*dt;p.y+=p.vy*dt;
+  if(p.life<=0)particles.splice(i,1);
+ }
+ draw();
+ requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+showScreen("menu");
+</script>
+</body>
+</html>
